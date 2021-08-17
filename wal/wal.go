@@ -72,6 +72,8 @@ var (
 // A newly created WAL is in append mode, and ready for appending records.
 // A just opened WAL is in read mode, and ready for reading records.
 // The WAL will be ready for appending after reading out all the previous records.
+// WAL有两种模式,read和append,新创建的WAL处于append模式
+// 当节点重启时会进行WAL回放,此时处于read模式,读完之后继续处于append模式
 type WAL struct {
 	lg *zap.Logger
 
@@ -107,6 +109,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 
 	// keep temporary wal directory so WAL initialization appears atomic
 	tmpdirpath := filepath.Clean(dirpath) + ".tmp"
+	fmt.Println("tmpdirpath", tmpdirpath)
 	if fileutil.Exist(tmpdirpath) {
 		if err := os.RemoveAll(tmpdirpath); err != nil {
 			return nil, err
@@ -125,6 +128,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 	}
 
 	p := filepath.Join(tmpdirpath, walName(0, 0))
+	fmt.Println("p", p)
 	f, err := fileutil.LockFile(p, os.O_WRONLY|os.O_CREATE, fileutil.PrivateFileMode)
 	if err != nil {
 		if lg != nil {

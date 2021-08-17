@@ -39,10 +39,12 @@ import (
 
 // A key-value stream backed by raft
 type raftNode struct {
+	// 接收到的客户端的数据请求会放到proposeC channel,集群变更信息放到confChangeC channel
 	proposeC    <-chan string            // proposed messages (k,v)
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
-	commitC     chan<- *string           // entries committed to log (k,v)
-	errorC      chan<- error             // errors from raft session
+	// 后端持久化存储读取这个channel进行数据持久化
+	commitC chan<- *string // entries committed to log (k,v)
+	errorC  chan<- error   // errors from raft session
 
 	id          int      // client ID for raft session
 	peers       []string // raft peer URLs
@@ -268,6 +270,7 @@ func (rc *raftNode) startRaft() {
 
 	oldwal := wal.Exist(rc.waldir)
 	rc.wal = rc.replayWAL()
+	fmt.Printf("wal:%#v\n", rc.wal)
 
 	rpeers := make([]raft.Peer, len(rc.peers))
 	for i := range rpeers {

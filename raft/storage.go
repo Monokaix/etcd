@@ -198,6 +198,7 @@ func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte)
 		return pb.Snapshot{}, ErrSnapOutOfDate
 	}
 
+	// 这里ents[0].Index存储的是snapShot之后的可见的第一个index值,得到的offset是已经snapShot的数量
 	offset := ms.ents[0].Index
 	if i > ms.lastIndex() {
 		raftLogger.Panicf("snapshot %d is out of bound lastindex(%d)", i, ms.lastIndex())
