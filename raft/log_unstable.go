@@ -122,6 +122,7 @@ func (u *unstable) restore(s pb.Snapshot) {
 	u.snapshot = &s
 }
 
+// 这里的追加针对的是untable的的entries字段，stable存储不受影响
 func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 	after := ents[0].Index
 	switch {
@@ -135,6 +136,7 @@ func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 		u.logger.Infof("replace the unstable entries from index %d", after)
 		// The log is being truncated to before our current offset
 		// portion, so set the offset and replace the entries
+		// 除了处理快照和从unstable变成table外，offset仅在这里改变
 		u.offset = after
 		u.entries = ents
 	default:
@@ -143,6 +145,7 @@ func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 		// then append
 		u.logger.Infof("truncate the unstable entries before index %d", after)
 		u.entries = append([]pb.Entry{}, u.slice(u.offset, after)...)
+		// 覆盖掉，因为虽热index和term相同，但存的Data字段不一定相同。因此强制覆盖
 		u.entries = append(u.entries, ents...)
 	}
 }
