@@ -203,6 +203,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 
 	// directory was renamed; sync parent dir to persist rename
 	pdir, perr := fileutil.OpenDir(filepath.Dir(w.dir))
+	fmt.Println("pdir:", w.dir)
 	if perr != nil {
 		if lg != nil {
 			lg.Warn(
@@ -289,6 +290,7 @@ func (w *WAL) renameWAL(tmpdirpath string) (*WAL, error) {
 	}
 	w.fp = newFilePipeline(w.lg, w.dir, SegmentSizeBytes)
 	df, err := fileutil.OpenDir(w.dir)
+	fmt.Println("w.dir", w.dir)
 	w.dirFile = df
 	return w, err
 }

@@ -231,6 +231,7 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	snapshot := rc.loadSnapshot()
 	w := rc.openWAL(snapshot)
 	_, st, ents, err := w.ReadAll()
+	fmt.Println("ents:", ents)
 	if err != nil {
 		log.Fatalf("raftexample: failed to read WAL (%v)", err)
 	}

@@ -121,6 +121,7 @@ type ProgressTracker struct {
 
 	Votes map[uint64]bool
 
+	// 当前节点已经发送出去但未收到响应的消息数量的上限
 	MaxInflight int
 }
 

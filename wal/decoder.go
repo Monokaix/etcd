@@ -17,6 +17,7 @@ package wal
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"io"
 	"sync"
@@ -70,6 +71,7 @@ func (d *decoder) decodeRecord(rec *walpb.Record) error {
 	}
 
 	l, err := readInt64(d.brs[0])
+	fmt.Println("l:", l)
 	if err == io.EOF || (err == nil && l == 0) {
 		// hit end of file or preallocated space
 		d.brs = d.brs[1:]
@@ -127,6 +129,7 @@ func decodeFrameSize(lenField int64) (recBytes int64, padBytes int64) {
 		// padding is stored in lower 3 bits of length MSB
 		padBytes = int64((uint64(lenField) >> 56) & 0x7)
 	}
+	fmt.Printf("recBytes %d,padBytes%d\n", recBytes, padBytes)
 	return recBytes, padBytes
 }
 

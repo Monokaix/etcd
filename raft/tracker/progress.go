@@ -73,6 +73,7 @@ type Progress struct {
 	// When a leader receives a reply, the previous inflights should
 	// be freed by calling inflights.FreeLE with the index of the last
 	// received entry.
+	// 限流 记录leader已经发出去但未确认的MsgApp数量
 	Inflights *Inflights
 
 	// IsLearner is true if this progress is tracked for a learner.

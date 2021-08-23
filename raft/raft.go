@@ -262,11 +262,13 @@ type raft struct {
 	// the log
 	raftLog *raftLog
 
+	// 单条消息的最大字节数
 	maxMsgSize         uint64
 	maxUncommittedSize uint64
 	// TODO(tbg): rename to trk.
 	prs tracker.ProgressTracker
 
+	// 节点角色，四种
 	state StateType
 
 	// isLearner is true if the local raft node is a learner.
@@ -293,6 +295,9 @@ type raft struct {
 
 	readOnly *readOnly
 
+	// 心跳和选举在raft这层都是逻辑时钟，上层通过自己定义的计时器ticker来推进逻辑时钟
+	// 隔段时间electionElapsed、heartbeatElapsed会++
+	// 当达到heartbeatTimeout和electionTimeout阈值时，会发起心跳或者选举
 	// number of ticks since it reached last electionTimeout when it is leader
 	// or candidate.
 	// number of ticks since it reached last electionTimeout or received a
@@ -303,6 +308,9 @@ type raft struct {
 	// only leader keeps heartbeatElapsed.
 	heartbeatElapsed int
 
+	// 应对网络分区的情况，若checkQuorum为true，leader会定期向其他节点发送连接，若没有超过一半
+	// 则自动切回follower，这样client就不会再连这个网络分区里的节点
+	// preVote也是为了避免网络分区导致term一直递增，发起选举前会进行一次预选举发起连接，能连接超过一半的节点数时才会真正进行选举
 	checkQuorum bool
 	preVote     bool
 
@@ -666,10 +674,13 @@ func (r *raft) tickElection() {
 }
 
 // tickHeartbeat is run by leaders to send a MsgBeat after r.heartbeatTimeout.
+
 func (r *raft) tickHeartbeat() {
 	r.heartbeatElapsed++
 	r.electionElapsed++
 
+	// leader自己选举超时不会发起新一轮的选举，但是会发送MsgCheckQuorum(本地消息，term值为0)消息判断自己能不能连通
+	// 集群的大多数节点，若不能则切换为follower
 	if r.electionElapsed >= r.electionTimeout {
 		r.electionElapsed = 0
 		if r.checkQuorum {
@@ -685,7 +696,10 @@ func (r *raft) tickHeartbeat() {
 		return
 	}
 
+	// 当心跳计数超时时，leader同样会发送本地消息MsgBeat，发送该消息中会继续调用r.bcastHeartbeat()方法
+	// 向follower广播心跳消息
 	if r.heartbeatElapsed >= r.heartbeatTimeout {
+		// 重置心跳计数
 		r.heartbeatElapsed = 0
 		r.Step(pb.Message{From: r.id, Type: pb.MsgBeat})
 	}

@@ -82,6 +82,7 @@ type MemoryStorage struct {
 	hardState pb.HardState
 	snapshot  pb.Snapshot
 	// ents[i] has raft log position i+snapshot.Metadata.Index
+	// 记录的是snapshot之后的Entry记录
 	ents []pb.Entry
 }
 
@@ -107,10 +108,12 @@ func (ms *MemoryStorage) SetHardState(st pb.HardState) error {
 }
 
 // Entries implements the Storage interface.
+// 查找指定范围内的日志
 func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	ms.Lock()
 	defer ms.Unlock()
 	offset := ms.ents[0].Index
+	// 日志已经压缩
 	if lo <= offset {
 		return nil, ErrCompacted
 	}
@@ -123,10 +126,12 @@ func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	}
 
 	ents := ms.ents[lo-offset : hi-offset]
+	// 根据限制的字节大小进行截断
 	return limitSize(ents, maxSize), nil
 }
 
 // Term implements the Storage interface.
+// 查找当前索引的任期
 func (ms *MemoryStorage) Term(i uint64) (uint64, error) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -169,13 +174,15 @@ func (ms *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 	return ms.snapshot, nil
 }
 
-// ApplySnapshot overwrites the contents of this Storage object with
+// ApplySnapshot overwrites the contentFs of this Storage object with
 // those of the given snapshot.
 func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 	ms.Lock()
 	defer ms.Unlock()
 
 	//handle check for old snapshot being applied
+	// pb.Snapshot存储了SnapshotMetadata字段存储了快照的元数据信息，其中Index字段存的是最后一条记录的Index值
+	// 因此通过Index的值来比较快照的新旧
 	msIndex := ms.snapshot.Metadata.Index
 	snapIndex := snap.Metadata.Index
 	if msIndex >= snapIndex {
@@ -183,6 +190,7 @@ func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 	}
 
 	ms.snapshot = snap
+	// 应用新的快照后，ents长度为1，Data字段为空，是一个空值
 	ms.ents = []pb.Entry{{Term: snap.Metadata.Term, Index: snap.Metadata.Index}}
 	return nil
 }
@@ -191,6 +199,7 @@ func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 // can be used to reconstruct the state at that point.
 // If any configuration changes have been made since the last compaction,
 // the result of the last ApplyConfChange must be passed in.
+// 创建快照，减少ms.ents的大小，释放内存压力
 func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte) (pb.Snapshot, error) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -198,12 +207,14 @@ func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte)
 		return pb.Snapshot{}, ErrSnapOutOfDate
 	}
 
-	// 这里ents[0].Index存储的是snapShot之后的可见的第一个index值,得到的offset是已经snapShot的数量
+	// 这里ents[0].Index存储的是snapShot之后的可见的第一个index值
 	offset := ms.ents[0].Index
 	if i > ms.lastIndex() {
 		raftLogger.Panicf("snapshot %d is out of bound lastindex(%d)", i, ms.lastIndex())
 	}
 
+	// 更新snapshot的元数据
+	// 真正的抛弃entry的操作是在Compact函数完成，这里只是更新了快照的元数据
 	ms.snapshot.Metadata.Index = i
 	ms.snapshot.Metadata.Term = ms.ents[i-offset].Term
 	if cs != nil {
@@ -229,6 +240,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 
 	i := compactIndex - offset
 	ents := make([]pb.Entry, 1, 1+uint64(len(ms.ents))-i)
+	// ents第一位记录的是索引和term，不记录真实的数据
 	ents[0].Index = ms.ents[i].Index
 	ents[0].Term = ms.ents[i].Term
 	ents = append(ents, ms.ents[i+1:]...)
@@ -239,6 +251,7 @@ func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 // Append the new entries to storage.
 // TODO (xiangli): ensure the entries are continuous and
 // entries[0].Index > ms.entries[0].Index
+// ApplySnapshot 只是第一步，Append真正追加Entry记录
 func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -251,21 +264,28 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	last := entries[0].Index + uint64(len(entries)) - 1
 
 	// shortcut if there is no new entry.
+	// entries的所有数据都已过期，无需追加
 	if last < first {
 		return nil
 	}
 	// truncate compacted entries
+	// 去掉要追加的过期的部分，即first-entries[0].Index的长度
 	if first > entries[0].Index {
 		entries = entries[first-entries[0].Index:]
 	}
 
 	offset := entries[0].Index - ms.ents[0].Index
 	switch {
+	    // 要追加的日志first index在原ms.来ents的范围内，保留原来的一部分offset，追加
+		// 后半部分新的日志覆盖原来的
 	case uint64(len(ms.ents)) > offset:
 		ms.ents = append([]pb.Entry{}, ms.ents[:offset]...)
 		ms.ents = append(ms.ents, entries...)
+		// 要追加的第一条新日志刚好在原来日志的最后一个空隙内，直接append新日志
 	case uint64(len(ms.ents)) == offset:
 		ms.ents = append(ms.ents, entries...)
+		// 要追加的日志的first index比原来ms.ents在最后一条日志记录还新，则不能追加，因为中间
+		// 会缺失一部分日志(不连续)
 	default:
 		raftLogger.Panicf("missing log entry [last: %d, append at: %d]",
 			ms.lastIndex(), entries[0].Index)
