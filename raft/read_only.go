@@ -22,6 +22,7 @@ import pb "go.etcd.io/etcd/raft/raftpb"
 // state is what it requests through RequestCtx, eg. given a unique id as
 // RequestCtx
 type ReadState struct {
+	// 只读请求发起时raft的commit index
 	Index      uint64
 	RequestCtx []byte
 }

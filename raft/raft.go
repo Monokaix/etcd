@@ -574,6 +574,7 @@ func (r *raft) advance(rd Ready) {
 	// new Commit index, this does not mean that we're also applying
 	// all of the new entries due to commit pagination by size.
 	if index := rd.appliedCursor(); index > 0 {
+		// 更新applied字段
 		r.raftLog.appliedTo(index)
 		if r.prs.Config.AutoLeave && index >= r.pendingConfIndex && r.state == StateLeader {
 			// If the current (and most recent, at least for this leader's term)
@@ -601,6 +602,7 @@ func (r *raft) advance(rd Ready) {
 
 	if len(rd.Entries) > 0 {
 		e := rd.Entries[len(rd.Entries)-1]
+		// 进行持久化
 		r.raftLog.stableTo(e.Index, e.Term)
 	}
 	if !IsEmptySnap(rd.Snapshot) {
