@@ -108,6 +108,7 @@ func (s *EtcdServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeRe
 	}(time.Now())
 
 	if !r.Serializable {
+		// server在这里会阻塞，一直等待线性一致读信号返回
 		err = s.linearizableReadNotify(ctx)
 		trace.Step("agreement among raft nodes before linearized reading")
 		if err != nil {
@@ -694,6 +695,7 @@ func (s *EtcdServer) linearizableReadLoop() {
 
 		lg := s.getLogger()
 		cctx, cancel := context.WithTimeout(context.Background(), s.Cfg.ReqTimeout())
+		// 在这里发出ReadIndex请求，然后下面监听从readStateC channel里取出的ReadState即可
 		if err := s.r.ReadIndex(cctx, ctxToSend); err != nil {
 			cancel()
 			if err == raft.ErrStopped {
@@ -758,6 +760,7 @@ func (s *EtcdServer) linearizableReadLoop() {
 			continue
 		}
 
+		// 这里是上层的处理只读的逻辑：等待apply index打大于只读请求记录的当时的commit index
 		if ai := s.getAppliedIndex(); ai < rs.Index {
 			select {
 			case <-s.applyWait.Wait(rs.Index):
@@ -766,6 +769,7 @@ func (s *EtcdServer) linearizableReadLoop() {
 			}
 		}
 		// unblock all l-reads requested at indices before rs.Index
+		// 给readNotifier发送信号，这样下面的函数就返回了
 		nr.notify(nil)
 	}
 }
@@ -783,6 +787,7 @@ func (s *EtcdServer) linearizableReadNotify(ctx context.Context) error {
 
 	// wait for read state notification
 	select {
+	// 等待线性一致可读的信号
 	case <-nc.c:
 		return nc.err
 	case <-ctx.Done():

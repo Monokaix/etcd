@@ -28,6 +28,16 @@ import (
 // strewn around `*raft.raft`. Additionally, some fields are only used when in a
 // certain State. All of this isn't ideal.
 type Progress struct {
+	// Next保存的是下一次leader发送append消息时传送过来的日志索引
+	// 当选举出新的leader时，首先初始化Next为该leader最后一条日志+1
+	// 如果向该节点append日志失败，则递减Next回退日志，一直回退到索引匹配为止
+	// Match保存在该节点上保存的日志的最大索引，初始化为0
+	// 正常情况下，Next = Match + 1
+	// 以下情况下不是上面这种情况：
+	// 1. 切换到Probe状态时，如果上一个状态是Snapshot状态，即正在接收快照，那么Next = max(pr.Match+1, pendingSnapshot+1)
+	// 2. 当该follower不在Replicate状态时，说明不是正常的接收副本状态。
+	//    此时当leader与follower同步leader上的日志时，可能出现覆盖的情况，即此时follower上面假设Match为3，但是索引为3的数据会被
+	//    leader覆盖，此时Next指针可能会一直回溯到与leader上日志匹配的位置，再开始正常同步日志，此时也会出现Next != Match + 1的情况出现
 	Match, Next uint64
 	// State defines how the leader should interact with the follower.
 	//

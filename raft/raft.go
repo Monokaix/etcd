@@ -170,6 +170,7 @@ type Config struct {
 	// has its own sending buffer over TCP/UDP. Setting MaxInflightMsgs to avoid
 	// overflowing that sending buffer. TODO (xiangli): feedback to application to
 	// limit the proposal rate?
+	// 类似于tcp缓冲区，防止一次发送过多的append message
 	MaxInflightMsgs int
 
 	// CheckQuorum specifies if the leader should check quorum activity. Leader
@@ -322,7 +323,9 @@ type raft struct {
 	randomizedElectionTimeout int
 	disableProposalForwarding bool
 
+	// 每个raft实例定义的真正的时钟推进函数
 	tick func()
+	// 每个raft实例接收到消息时的处理函数
 	step stepFunc
 
 	logger Logger
@@ -464,6 +467,9 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 		return false
 	}
 
+	// 出错表示在leader本地找不到follower对应的日志index，因此需要向follower发送snap消息
+	// 比如follower长时间宕机，则重启后leader的数据可能已经压缩至snapshot，因此找不到对应的index，
+	// 因此需要发送snapshot消息，以同步最新数据至follower节点
 	if errt != nil || erre != nil { // send snapshot if we failed to get term or entries
 		if !pr.RecentActive {
 			r.logger.Debugf("ignore sending snapshot to %x since it is not recently active", to)
@@ -520,6 +526,7 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	// or it might not have all the committed entries.
 	// The leader MUST NOT forward the follower's commit to
 	// an unmatched index.
+	// 需要发送commit，以通知follower commit到指定位置
 	commit := min(r.prs.Progress[to].Match, r.raftLog.committed)
 	m := pb.Message{
 		To:      to,
@@ -625,12 +632,15 @@ func (r *raft) reset(term uint64) {
 	r.prs.ResetVotes()
 	r.prs.Visit(func(id uint64, pr *tracker.Progress) {
 		*pr = tracker.Progress{
+			// 初始化默认为0
 			Match:     0,
+			// 其他节点的Next值为最后一个索引位置
 			Next:      r.raftLog.lastIndex() + 1,
 			Inflights: tracker.NewInflights(r.prs.MaxInflight),
 			IsLearner: pr.IsLearner,
 		}
 		if id == r.id {
+			// 当前节点的Match值设置为最后一个索引位置
 			pr.Match = r.raftLog.lastIndex()
 		}
 	})
@@ -643,6 +653,7 @@ func (r *raft) reset(term uint64) {
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	li := r.raftLog.lastIndex()
 	for i := range es {
+		// 为每一条日志指定Term和Index
 		es[i].Term = r.Term
 		es[i].Index = li + 1 + uint64(i)
 	}
@@ -657,6 +668,7 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	}
 	// use latest "last" index after truncate/append
 	li = r.raftLog.append(es...)
+	// 尝试更新本节点自身的Match和Index值
 	r.prs.Progress[r.id].MaybeUpdate(li)
 	// Regardless of maybeCommit's return, our caller will call bcastAppend.
 	r.maybeCommit()
@@ -757,6 +769,7 @@ func (r *raft) becomeLeader() {
 	// (perhaps after having received a snapshot as a result). The leader is
 	// trivially in this state. Note that r.reset() has initialized this
 	// progress with the last index already.
+	// 	其他progress变成可复制状态
 	r.prs.Progress[r.id].BecomeReplicate()
 
 	// Conservatively set the pendingConfIndex to the last index in the
@@ -843,9 +856,39 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected 
 	return r.prs.TallyVotes()
 }
 
+
+// Step
+// 处理各种消息
+// 消息发送发在每次tick函数中发送消息
+// 消息接收方也调用该函数进行消息处理
+// 先判断Term信息再比较Type信息
+// 集群启动，首先一个节点开始选举，发送MsgHup消息，参与竞选，发送MsgPreVote或者MsgVote消息
+// 节点接收到消息继续一些验证工作(Term大小，是否发生配置变化等)，然后决定是否参与投票，若参与则发送MsgVoteResp消息，
+// 候选节点进入candidate状态处理MsgVoteRes消息，统计得票超过一半没拒接则发起正式投票，正式投票发送MsgVote消息，然后其他节点
+// 同样在收到消息后发送MsgVoteResp消息，候选节点再次统计票数，获选后调用becomeLeader变成leader，否则调用becomeFollower变成follower
+// 变成leader后通过bcastAppend函数向其他节点广播MsgApp消息，follower收到后进行日志追加，然后回复MsgAppResp消息
+// 其中会根据progress的状态和MsgAppResp携带的消息更新Progress.Next字段
+
+// leader的tick函数每一次会发送MsgBeat消息，这是一个本地消息，然后再通过bcastHeartbeat()发送MsgHeatBaet消息
+// follower收到MsgHeatBaet消息通过handleHeartbeat进行处理，更新已提交的日志位置，回复MsgHeartbeatResp消息
+// leader接收到MsgHeartbeatResp消息判断是否需要向leader追加新的日志，有的话通过sendAppend发送日志
+
+// 客户端的写请求发送的是MsgProp消息，leader在本地进行append完之后发送MsgApp消息通知follower进行日志追加，
+// follower接收到MsgProp消息不会处理而是把消息发给leader
+
+// 线性一致性读：
+// 只读请求发送的是ReadIndex类型的消息，只有leader才能处理ReadIndex请求，客户端请求数据会在raft层进行协商，只有在leader可以
+// 连通follower才会返回消息，此消息记录的是当前请求对应的commit index等消息
+// 对于应用层来说，读请求是一个Range请求，会在linearizableReadNotify函数里阻塞，等待线性一致读的信号，
+// 同时有另外一个协程linearizableReadLoop会等待当前applied index大于只读请求时的commit index时返回信息，此时才会
+// 把请求返回给客户端。
+// 那linearizableReadLoop怎么知道apply index进行到哪了呢？
+// etcdserver会有一个专门的额协程通过channel监听每次apply事件，从而知道applyindex的位置
+
 func (r *raft) Step(m pb.Message) error {
 	// Handle the message term, which may result in our stepping down to a follower.
 	switch {
+	// Term=0 代表本地消息
 	case m.Term == 0:
 		// local message
 	case m.Term > r.Term:
@@ -1106,15 +1149,18 @@ func stepLeader(r *raft, m pb.Message) error {
 			// This would allow multiple reads to piggyback on the same message.
 			switch r.readOnly.option {
 			case ReadOnlySafe:
+				// 添加对应的请求到本地，并记录请求对应的当前已提交的位置，消息m和follower的确认信息
 				r.readOnly.addRequest(r.raftLog.committed, m)
 				// The local node automatically acks the request.
 				r.readOnly.recvAck(r.id, m.Entries[0].Data)
+				// 向follower发送heatbeat消息时会写到ctx，follower收到带有ctx的消息会发送heatbeatRsp，然后leader进一步进行处理
 				r.bcastHeartbeatWithCtx(m.Entries[0].Data)
 			case ReadOnlyLeaseBased:
 				ri := r.raftLog.committed
 				if m.From == None || m.From == r.id { // from local member
 					r.readStates = append(r.readStates, ReadState{Index: ri, RequestCtx: m.Entries[0].Data})
 				} else {
+					// 如果是follower传过来的消息，处理完后再返回给发过来的follower，然后由对应的follower响应client
 					r.send(pb.Message{To: m.From, Type: pb.MsgReadIndexResp, Index: ri, Entries: m.Entries})
 				}
 			}
@@ -1187,6 +1233,7 @@ func stepLeader(r *raft, m pb.Message) error {
 				for r.maybeSendAppend(m.From, false) {
 				}
 				// Transfer leadership is in progress.
+				// 当所有日志都复制完才会进行节点leader权转移
 				if m.From == r.leadTransferee && pr.Match == r.raftLog.lastIndex() {
 					r.logger.Infof("%x sent MsgTimeoutNow to %x after received MsgAppResp", r.id, m.From)
 					r.sendTimeoutNow(m.From)
@@ -1209,6 +1256,7 @@ func stepLeader(r *raft, m pb.Message) error {
 			return nil
 		}
 
+		// 统计follower是否都接收到消息
 		if r.prs.Voters.VoteResult(r.readOnly.recvAck(m.From, m.Context)) != quorum.VoteWon {
 			return nil
 		}
@@ -1222,6 +1270,7 @@ func stepLeader(r *raft, m pb.Message) error {
 				r.send(pb.Message{To: req.From, Type: pb.MsgReadIndexResp, Index: rs.index, Entries: req.Entries})
 			}
 		}
+		// leader针对发送snapshot异常时的处理逻辑
 	case pb.MsgSnapStatus:
 		if pr.State != tracker.StateSnapshot {
 			return nil
@@ -1251,11 +1300,13 @@ func stepLeader(r *raft, m pb.Message) error {
 			pr.BecomeProbe()
 		}
 		r.logger.Debugf("%x failed to send message to %x because it is unreachable [%s]", r.id, m.From, pr)
+		// 处理节点leader转移的请求
 	case pb.MsgTransferLeader:
 		if pr.IsLearner {
 			r.logger.Debugf("%x is learner. Ignored transferring leadership", r.id)
 			return nil
 		}
+		// m.From是要转移成为leader的节点
 		leadTransferee := m.From
 		lastLeadTransferee := r.leadTransferee
 		if lastLeadTransferee != None {
@@ -1277,6 +1328,7 @@ func stepLeader(r *raft, m pb.Message) error {
 		r.electionElapsed = 0
 		r.leadTransferee = leadTransferee
 		if pr.Match == r.raftLog.lastIndex() {
+			// 向目标follower发送超时消息，然后follower会立即超时发起选举
 			r.sendTimeoutNow(leadTransferee)
 			r.logger.Infof("%x sends MsgTimeoutNow to %x immediately as %x already has up-to-date log", r.id, leadTransferee, leadTransferee)
 		} else {
@@ -1320,6 +1372,7 @@ func stepCandidate(r *raft, m pb.Message) error {
 				r.campaign(campaignElection)
 			} else {
 				r.becomeLeader()
+				// 向其他节点广播MsgApp消息，其他节点收到后进行重置计时器等操作
 				r.bcastAppend()
 			}
 		case quorum.VoteLost:
@@ -1356,6 +1409,7 @@ func stepFollower(r *raft, m pb.Message) error {
 	case pb.MsgSnap:
 		r.electionElapsed = 0
 		r.lead = m.From
+		// 处理leader节点发送的snapshot消息
 		r.handleSnapshot(m)
 	case pb.MsgTransferLeader:
 		if r.lead == None {
@@ -1370,10 +1424,12 @@ func stepFollower(r *raft, m pb.Message) error {
 			// Leadership transfers never use pre-vote even if r.preVote is true; we
 			// know we are not recovering from a partition so there is no need for the
 			// extra round trip.
+			// 当前follower发起选举，campaignTransfer消息表示其他follower会立即参与选举，让当前节点变成leader
 			r.campaign(campaignTransfer)
 		} else {
 			r.logger.Infof("%x received MsgTimeoutNow from %x but is not promotable", r.id, m.From)
 		}
+		// follower收到MsgReadIndex消息，转发给leader
 	case pb.MsgReadIndex:
 		if r.lead == None {
 			r.logger.Infof("%x no leader at term %d; dropping index reading msg", r.id, r.Term)
@@ -1386,6 +1442,7 @@ func stepFollower(r *raft, m pb.Message) error {
 			r.logger.Errorf("%x invalid format of MsgReadIndexResp from %x, entries count: %d", r.id, m.From, len(m.Entries))
 			return nil
 		}
+		// 存入本地readState数组，
 		r.readStates = append(r.readStates, ReadState{Index: m.Index, RequestCtx: m.Entries[0].Data})
 	}
 	return nil
@@ -1504,6 +1561,7 @@ func (r *raft) restore(s pb.Snapshot) bool {
 
 // promotable indicates whether state machine can be promoted to leader,
 // which is true when its own id is in progress list.
+// 检测当前节点是否还在progress map里，即有没有被集群移除
 func (r *raft) promotable() bool {
 	pr := r.prs.Progress[r.id]
 	return pr != nil && !pr.IsLearner

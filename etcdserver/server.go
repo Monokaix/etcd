@@ -31,7 +31,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/coreos/pkg/capnslog"
-	humanize "github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.etcd.io/etcd/auth"
 	"go.etcd.io/etcd/etcdserver/api"
@@ -743,6 +743,7 @@ func (s *EtcdServer) Start() {
 	s.goAttach(s.purgeFile)
 	s.goAttach(func() { monitorFileDescriptor(s.getLogger(), s.stopping) })
 	s.goAttach(s.monitorVersions)
+	// 启动线性一致读协程来处理只读请求
 	s.goAttach(s.linearizableReadLoop)
 	s.goAttach(s.monitorKVHash)
 }
@@ -1114,6 +1115,7 @@ func (s *EtcdServer) applyAll(ep *etcdProgress, apply *apply) {
 	s.applyEntries(ep, apply)
 
 	proposalsApplied.Set(float64(ep.appliedi))
+	// 每次apply完都会触发一次trigger，然后trigger触发applyWait.Wait读取到channel关闭信号返回
 	s.applyWait.Trigger(ep.appliedi)
 
 	// wait for the raft routine to finish the disk writes before triggering a

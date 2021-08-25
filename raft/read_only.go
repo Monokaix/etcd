@@ -100,11 +100,13 @@ func (ro *readOnly) advance(m pb.Message) []*readIndexStatus {
 		}
 	}
 
+	// 把之前的readOnly对应的key v都删除
 	if found {
 		ro.readIndexQueue = ro.readIndexQueue[i:]
 		for _, rs := range rss {
 			delete(ro.pendingReadIndex, string(rs.req.Entries[0].Data))
 		}
+		// 这里只返回当前key之前的那些key对应的readIndexStatus
 		return rss
 	}
 

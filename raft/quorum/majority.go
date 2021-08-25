@@ -138,6 +138,7 @@ func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 	// replication factor of >7 is rare, and in cases in which it happens
 	// performance is a lesser concern (additionally the performance
 	// implications of an allocation here are far from drastic).
+	// 超过7个成员分配在堆上，否则分配在栈上
 	var stk [7]uint64
 	var srt []uint64
 	if len(stk) >= n {
@@ -203,6 +204,7 @@ func (c MajorityConfig) VoteResult(votes map[uint64]bool) VoteResult {
 	if ny[1] >= q {
 		return VoteWon
 	}
+	// 一部分票可能还没到
 	if ny[1]+missing >= q {
 		return VotePending
 	}
