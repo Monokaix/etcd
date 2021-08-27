@@ -265,9 +265,9 @@ type msgWithResult struct {
 
 // node is the canonical implementation of the Node interface
 type node struct {
-	// 接收MsgResp类型的消息
+	// 接收MsgProp类型的消息
 	propc      chan msgWithResult
-	// 除MsgResp外其他消息
+	// 除MsgProp外其他消息
 	recvc      chan pb.Message
 	// 节点收到EntryConfChange类型Entry记录会转换成ConfChange，然后写入该channel
 	confc      chan pb.ConfChangeV2
@@ -369,9 +369,12 @@ func (n *node) run() {
 				pm.result <- err
 				close(pm.result)
 			}
+			// 一个请求发给一个raft实例，该请求经过本地raft状态机处理后返回ready实例，该ready实例包含的
+			// 消息会再次同raft的transport发给其他raft实例，其他raft实例处理完同样把resp消息传递到这个channel
+			// 这个channel再应用到本地状态机，然后继续返回Ready实例到上层
 		case m := <-n.recvc:
 			// filter out response message from unknown From.
-			// 过滤掉Resp类型的消息
+			// 过滤掉未知来源的Resp类型的消息
 			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
 				r.Step(m)
 			}
@@ -408,7 +411,7 @@ func (n *node) run() {
 			// 推进选举心跳时钟前进
 		case <-n.tickc:
 			n.rn.Tick()
-			// 将ready写入readyc供上层处理
+			// 将ready写入readyc供上层处理，将rd写入外部ready chan，外部通过Ready()方法取到ready数据
 		case readyc <- rd:
 			n.rn.acceptReady(rd)
 			// 此时advance不为空

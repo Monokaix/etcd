@@ -158,6 +158,7 @@ func (cw *streamWriter) run() {
 		flusher    http.Flusher
 		batched    int
 	)
+	// 防止长连接长时间不用断开
 	tickc := time.NewTicker(ConnReadTimeout / 3)
 	defer tickc.Stop()
 	unflushed := 0
@@ -206,6 +207,7 @@ func (cw *streamWriter) run() {
 			if err == nil {
 				unflushed += m.Size()
 
+				// 读取完数据发给底层连接
 				if len(msgc) == 0 || batched > streamBufSize/2 {
 					flusher.Flush()
 					sentBytes.WithLabelValues(cw.peerID.String()).Add(float64(unflushed))
@@ -484,6 +486,7 @@ func (cr *streamReader) run() {
 	}
 }
 
+// 从底层网络读取数据并放到recvc channel，供本地raft处理
 func (cr *streamReader) decodeLoop(rc io.ReadCloser, t streamType) error {
 	var dec decoder
 	cr.mu.Lock()

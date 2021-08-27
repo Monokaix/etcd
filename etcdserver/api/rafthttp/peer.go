@@ -173,6 +173,7 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID, fs *stats.Followe
 	go func() {
 		for {
 			select {
+			// 从recv中读取网络中发来的消息，交给本地raft层处理
 			case mm := <-p.recvc:
 				if err := r.Process(ctx, mm); err != nil {
 					if t.Logger != nil {
@@ -193,6 +194,7 @@ func startPeer(t *Transport, urls types.URLs, peerID types.ID, fs *stats.Followe
 	go func() {
 		for {
 			select {
+			// 写请求(MsgProp消息)比较耗时，因此放在单独协程处理
 			case mm := <-p.propc:
 				if err := r.Process(ctx, mm); err != nil {
 					plog.Warningf("failed to process raft message (%v)", err)
@@ -241,6 +243,7 @@ func (p *peer) send(m raftpb.Message) {
 		return
 	}
 
+	// 会根据消息类型选择要发送到哪个channel和类型
 	writec, name := p.pick(m)
 	select {
 	case writec <- m:

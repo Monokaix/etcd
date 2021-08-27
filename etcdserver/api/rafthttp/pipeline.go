@@ -53,6 +53,7 @@ type pipeline struct {
 	// deprecate when we depercate v2 API
 	followerStats *stats.FollowerStats
 
+	// 存储待发送的消息
 	msgc chan raftpb.Message
 	// wait for the handling routines
 	wg    sync.WaitGroup
@@ -98,6 +99,7 @@ func (p *pipeline) handle() {
 
 	for {
 		select {
+		// 从msgc取出消息通过网络发送
 		case m := <-p.msgc:
 			start := time.Now()
 			err := p.post(pbutil.MustMarshal(&m))
@@ -122,6 +124,7 @@ func (p *pipeline) handle() {
 				p.followerStats.Succ(end.Sub(start))
 			}
 			if isMsgSnap(m) {
+				// 向本地状态机报告发送成功
 				p.raft.ReportSnapshot(m.To, raft.SnapshotFinish)
 			}
 			sentBytes.WithLabelValues(types.ID(m.To).String()).Add(float64(m.Size()))
@@ -149,6 +152,7 @@ func (p *pipeline) post(data []byte) (err error) {
 		}
 	}()
 
+	// 执行单个HTTP事务
 	resp, err := p.tr.pipelineRt.RoundTrip(req)
 	done <- struct{}{}
 	if err != nil {

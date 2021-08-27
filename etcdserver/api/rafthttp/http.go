@@ -30,7 +30,7 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 	"go.etcd.io/etcd/version"
 
-	humanize "github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +45,7 @@ const (
 )
 
 var (
+	// 这里定义的是raft内部通信的接口路由
 	RaftPrefix         = "/raft"
 	ProbingPrefix      = path.Join(RaftPrefix, "probing")
 	RaftStreamPrefix   = path.Join(RaftPrefix, "stream")
@@ -197,6 +198,7 @@ const unknownSnapshotSender = "UNKNOWN_SNAPSHOT_SENDER"
 // 1. snapshot messages sent through other TCP connections could still be
 // received and processed.
 // 2. this case should happen rarely, so no further optimization is done.
+// 读取对端发来的快照消息并交给本地状态机处理
 func (h *snapshotHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 

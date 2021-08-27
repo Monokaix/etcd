@@ -417,7 +417,10 @@ func (rc *raftNode) serveChannels() {
 					rc.proposeC = nil
 				} else {
 					// blocks until accepted by raft state machine
-					// 向node的channel里发送数据，run协程会进程单独处理
+					// 向node的channel里发送数据，prop类型的消息最终会被放到propc channel里
+					// 而run协程会进程持久运行监听propc和recvc channel，将收到的数据发给raft处理
+					// raft处理完会在本地缓存待发送的消息msg，run协程同样会不断检查是否有待发送的消息，封装成Ready
+					// 通过readyc channel再返回给上层
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}
 
@@ -442,7 +445,7 @@ func (rc *raftNode) serveChannels() {
 			rc.node.Tick()
 
 		// store raft entries to wal, then publish over commit channel
-		// 这里即使上层处理Ready实例的地方 进行持久化等操作
+		// 这里即是上层处理Ready实例的地方 进行持久化等操作 即从本地得到了本地raft处理过的消息
 		case rd := <-rc.node.Ready():
 			rc.wal.Save(rd.HardState, rd.Entries)
 			// 生成了新的快照数据
@@ -452,6 +455,7 @@ func (rc *raftNode) serveChannels() {
 				rc.publishSnapshot(rd.Snapshot)
 			}
 			rc.raftStorage.Append(rd.Entries)
+			// 通过transport的Send方法发送到其他节点
 			rc.transport.Send(rd.Messages)
 			// 将entries的数据放到Commitc，外部的持久化存储将数据写入db
 			if ok := rc.publishEntries(rc.entriesToApply(rd.CommittedEntries)); !ok {

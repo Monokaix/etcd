@@ -136,10 +136,12 @@ type Transport struct {
 
 func (t *Transport) Start() error {
 	var err error
+	// Stream消息通道
 	t.streamRt, err = newStreamRoundTripper(t.TLSInfo, t.DialTimeout)
 	if err != nil {
 		return err
 	}
+	// PipeLine消息通道
 	t.pipelineRt, err = NewRoundTripper(t.TLSInfo, t.DialTimeout)
 	if err != nil {
 		return err
@@ -158,6 +160,7 @@ func (t *Transport) Start() error {
 	return nil
 }
 
+// Transport的Handler是处理集群内部通信的handler，跟外部客户端对应的server端handler不一样
 func (t *Transport) Handler() http.Handler {
 	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID)
 	streamHandler := newStreamHandler(t, t, t.Raft, t.ID, t.ClusterID)
@@ -176,6 +179,7 @@ func (t *Transport) Get(id types.ID) Peer {
 	return t.peers[id]
 }
 
+// Send发送Message消息到其他节点
 func (t *Transport) Send(msgs []raftpb.Message) {
 	for _, m := range msgs {
 		if m.To == 0 {
@@ -197,6 +201,7 @@ func (t *Transport) Send(msgs []raftpb.Message) {
 			continue
 		}
 
+		// 刚加入的节点，还没添加到节点实例，发送远程消息
 		if rok {
 			g.send(m)
 			continue

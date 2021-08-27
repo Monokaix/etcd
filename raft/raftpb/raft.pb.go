@@ -84,13 +84,17 @@ type MessageType int32
 
 const (
 	MsgHup            MessageType = 0
+	// leader节点发送心跳时的本地消息
 	MsgBeat           MessageType = 1
+	// 写请求消息
 	MsgProp           MessageType = 2
+	// leader节点发送的追加日志的消息
 	MsgApp            MessageType = 3
 	MsgAppResp        MessageType = 4
 	MsgVote           MessageType = 5
 	MsgVoteResp       MessageType = 6
 	MsgSnap           MessageType = 7
+	// leader节点发送心跳时的发往其他节点的消息
 	MsgHeartbeat      MessageType = 8
 	MsgHeartbeatResp  MessageType = 9
 	MsgUnreachable    MessageType = 10
