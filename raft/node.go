@@ -523,6 +523,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		return ErrStopped
 	}
 	select {
+	// 这里有个阻塞调用，会等待raft的Step消息返回
 	case err := <-pm.result:
 		if err != nil {
 			return err

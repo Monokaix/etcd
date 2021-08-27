@@ -36,9 +36,14 @@ import (
 )
 
 const (
+	// 每条wal日志的类型
+	// 元数据，保存在每个wal文件的首部
 	metadataType int64 = iota + 1
+	// 实际的数据
 	entryType
+	// hardState类型的数据
 	stateType
+	// 当前wal日志记录之前所有wal日志的crc值
 	crcType
 	snapshotType
 
@@ -86,6 +91,7 @@ type WAL struct {
 	state    raftpb.HardState // hardstate recorded at the head of WAL
 
 	start     walpb.Snapshot // snapshot to start reading
+	// encoder和decoder都代表一个文件，用于数据的读取和写入
 	decoder   *decoder       // decoder to decode records
 	readClose func() error   // closer for decode reader
 
@@ -967,6 +973,7 @@ func (w *WAL) SaveSnapshot(e walpb.Snapshot) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// 只更新snapshot元数据，不存储具体的snapshot数据
 	rec := &walpb.Record{Type: snapshotType, Data: b}
 	if err := w.encoder.encode(rec); err != nil {
 		return err

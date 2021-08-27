@@ -123,6 +123,7 @@ func (rc *raftNode) saveSnap(snap raftpb.Snapshot) error {
 	if err := rc.snapshotter.SaveSnap(snap); err != nil {
 		return err
 	}
+	// 添加新的快照之后就可以释放快照之前的那些wal文件的文件锁
 	return rc.wal.ReleaseLockTo(snap.Metadata.Index)
 }
 
@@ -214,6 +215,7 @@ func (rc *raftNode) openWAL(snapshot *raftpb.Snapshot) *wal.WAL {
 
 	walsnap := walpb.Snapshot{}
 	if snapshot != nil {
+		// walsnap此时不包含真正的数据
 		walsnap.Index, walsnap.Term = snapshot.Metadata.Index, snapshot.Metadata.Term
 	}
 	log.Printf("loading WAL at term %d and index %d", walsnap.Term, walsnap.Index)
@@ -237,16 +239,19 @@ func (rc *raftNode) replayWAL() *wal.WAL {
 	}
 	rc.raftStorage = raft.NewMemoryStorage()
 	if snapshot != nil {
+		// 先应用快照，再应用entries
 		rc.raftStorage.ApplySnapshot(*snapshot)
 	}
 	rc.raftStorage.SetHardState(st)
 
 	// append to storage so raft starts at the right place in log
+	// 在这里追加ents，快照在前面追加
 	rc.raftStorage.Append(ents)
 	// send nil once lastIndex is published so client knows commit channel is current
 	if len(ents) > 0 {
 		rc.lastIndex = ents[len(ents)-1].Index
 	} else {
+		// 发送信号让上层返回
 		rc.commitC <- nil
 	}
 	return w
@@ -270,6 +275,7 @@ func (rc *raftNode) startRaft() {
 	rc.snapshotterReady <- rc.snapshotter
 
 	oldwal := wal.Exist(rc.waldir)
+	// 回放日志，没有的话就新建
 	rc.wal = rc.replayWAL()
 	fmt.Printf("wal:%#v\n", rc.wal)
 
@@ -314,7 +320,9 @@ func (rc *raftNode) startRaft() {
 		}
 	}
 
+	// 监听当前节点与其他节点的网络连接，添加server的handler，并启动server进行监听
 	go rc.serveRaft()
+	// 处理应用层与底层raft模块的交互
 	go rc.serveChannels()
 }
 
@@ -358,6 +366,7 @@ func (rc *raftNode) maybeTriggerSnapshot() {
 	}
 
 	log.Printf("start snapshot [applied index: %d | last snapshot index: %d]", rc.appliedIndex, rc.snapshotIndex)
+	// 获取当前时刻系统的数据作为快照
 	data, err := rc.getSnapshot()
 	if err != nil {
 		log.Panic(err)
@@ -366,6 +375,7 @@ func (rc *raftNode) maybeTriggerSnapshot() {
 	if err != nil {
 		panic(err)
 	}
+	// 这里只在wal添加snap的元数据，不存储具体数据
 	if err := rc.saveSnap(snap); err != nil {
 		panic(err)
 	}
@@ -407,6 +417,7 @@ func (rc *raftNode) serveChannels() {
 					rc.proposeC = nil
 				} else {
 					// blocks until accepted by raft state machine
+					// 向node的channel里发送数据，run协程会进程单独处理
 					rc.node.Propose(context.TODO(), []byte(prop))
 				}
 
@@ -431,8 +442,10 @@ func (rc *raftNode) serveChannels() {
 			rc.node.Tick()
 
 		// store raft entries to wal, then publish over commit channel
+		// 这里即使上层处理Ready实例的地方 进行持久化等操作
 		case rd := <-rc.node.Ready():
 			rc.wal.Save(rd.HardState, rd.Entries)
+			// 生成了新的快照数据
 			if !raft.IsEmptySnap(rd.Snapshot) {
 				rc.saveSnap(rd.Snapshot)
 				rc.raftStorage.ApplySnapshot(rd.Snapshot)
@@ -440,11 +453,13 @@ func (rc *raftNode) serveChannels() {
 			}
 			rc.raftStorage.Append(rd.Entries)
 			rc.transport.Send(rd.Messages)
+			// 将entries的数据放到Commitc，外部的持久化存储将数据写入db
 			if ok := rc.publishEntries(rc.entriesToApply(rd.CommittedEntries)); !ok {
 				rc.stop()
 				return
 			}
 			rc.maybeTriggerSnapshot()
+			// 通知node可以处理下一个Ready实例
 			rc.node.Advance()
 
 		case err := <-rc.transport.ErrorC:

@@ -63,6 +63,7 @@ func (s *kvstore) Propose(k string, v string) {
 
 func (s *kvstore) readCommits(commitC <-chan *string, errorC <-chan error) {
 	for data := range commitC {
+		// 加载快照，直接用快照数据更新本地存储
 		if data == nil {
 			// done replaying log; new data incoming
 			// OR signaled to load snapshot

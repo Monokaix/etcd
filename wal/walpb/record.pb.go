@@ -36,6 +36,7 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
+// 一条wal日志的基本结构
 type Record struct {
 	Type             int64  `protobuf:"varint,1,opt,name=type" json:"type"`
 	Crc              uint32 `protobuf:"varint,2,opt,name=crc" json:"crc"`

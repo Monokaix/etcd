@@ -29,6 +29,7 @@ import (
 // walPageBytes is the alignment for flushing records to the backing Writer.
 // It should be a multiple of the minimum sector size so that WAL can safely
 // distinguish between torn writes and ordinary data corruption.
+// 4K大小
 const walPageBytes = 8 * minSectorSize
 
 type encoder struct {
@@ -63,6 +64,7 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// 写入crc结果
 	e.crc.Write(rec.Data)
 	rec.Crc = e.crc.Sum32()
 	var (

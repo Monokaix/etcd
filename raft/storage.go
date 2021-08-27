@@ -189,6 +189,7 @@ func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 		return ErrSnapOutOfDate
 	}
 
+	// 直接全量覆盖snap
 	ms.snapshot = snap
 	// 应用新的快照后，ents长度为1，Data字段为空，是一个空值
 	ms.ents = []pb.Entry{{Term: snap.Metadata.Term, Index: snap.Metadata.Index}}
@@ -220,6 +221,7 @@ func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte)
 	if cs != nil {
 		ms.snapshot.Metadata.ConfState = *cs
 	}
+	// 直接替换snapshot的Data部分
 	ms.snapshot.Data = data
 	return ms.snapshot, nil
 }

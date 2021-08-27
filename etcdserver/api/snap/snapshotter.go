@@ -64,6 +64,7 @@ func New(lg *zap.Logger, dir string) *Snapshotter {
 	}
 }
 
+// 持久化snapshot数据
 func (s *Snapshotter) SaveSnap(snapshot raftpb.Snapshot) error {
 	if raft.IsEmptySnap(snapshot) {
 		return nil
