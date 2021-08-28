@@ -60,12 +60,14 @@ func (st *storage) SaveSnap(snap raftpb.Snapshot) error {
 	// save the snapshot file before writing the snapshot to the wal.
 	// This makes it possible for the snapshot file to become orphaned, but prevents
 	// a WAL snapshot entry from having no corresponding snapshot file.
+	// 快照写入磁盘
 	err := st.Snapshotter.SaveSnap(snap)
 	if err != nil {
 		return err
 	}
 	// gofail: var raftBeforeWALSaveSnaphot struct{}
 
+	// 写入WAL日志
 	return st.WAL.SaveSnapshot(walsnap)
 }
 

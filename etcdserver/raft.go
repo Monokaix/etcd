@@ -76,6 +76,7 @@ type apply struct {
 	notifyc chan struct{}
 }
 
+// etcd server里的raftNode
 type raftNode struct {
 	lg *zap.Logger
 
@@ -89,11 +90,13 @@ type raftNode struct {
 	applyc chan apply
 
 	// a chan to send out readState
+	// 封装只读请求
 	readStateC chan raft.ReadState
 
 	// utility
 	ticker *time.Ticker
 	// contention detectors for raft heartbeat message
+	// 检测发往同一节点的两次心跳是否超时
 	td *contention.TimeoutDetector
 
 	stopped chan struct{}
@@ -106,6 +109,7 @@ type raftNodeConfig struct {
 	// to check if msg receiver is removed from cluster
 	isIDRemoved func(id uint64) bool
 	raft.Node
+	// 就是MemoryStorage实例
 	raftStorage *raft.MemoryStorage
 	storage     Storage
 	heartbeat   time.Duration // for logging
@@ -194,9 +198,12 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					r.td.Reset()
 				}
 
+				// 处理只读请求
 				if len(rd.ReadStates) != 0 {
 					select {
+					// 处理只读请求，每次取出一个只读请求放到readStateC
 					case r.readStateC <- rd.ReadStates[len(rd.ReadStates)-1]:
+						// 如果上一个case的channel缓冲区满，会走到这个分支，然后等待internalTimeout
 					case <-time.After(internalTimeout):
 						if r.lg != nil {
 							r.lg.Warn("timed out sending read state", zap.Duration("timeout", internalTimeout))
@@ -246,6 +253,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				}
 
 				// gofail: var raftBeforeSave struct{}
+				// 写入HardState和Entry到WAL日志
 				if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
 					if r.lg != nil {
 						r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
@@ -275,6 +283,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					notifyc <- struct{}{}
 
 					// gofail: var raftBeforeApplySnap struct{}
+					// 保存快照到memory storage的持久化存储
 					r.raftStorage.ApplySnapshot(rd.Snapshot)
 					if r.lg != nil {
 						r.lg.Info("applied incoming Raft snapshot", zap.Uint64("snapshot-index", rd.Snapshot.Metadata.Index))
@@ -293,6 +302,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					// gofail: var raftAfterWALRelease struct{}
 				}
 
+				// Entry写入Memory Storage中
 				r.raftStorage.Append(rd.Entries)
 
 				if !islead {
@@ -362,6 +372,7 @@ func (r *raftNode) processMessages(ms []raftpb.Message) []raftpb.Message {
 			ms[i].To = 0
 		}
 
+		// 只保留之后一条MsgAppResp
 		if ms[i].Type == raftpb.MsgAppResp {
 			if sentAppResp {
 				ms[i].To = 0
