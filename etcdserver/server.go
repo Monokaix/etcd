@@ -146,6 +146,7 @@ type ServerV3 interface {
 
 func (s *EtcdServer) ClientCertAuthEnabled() bool { return s.Cfg.ClientCertAuthEnabled }
 
+// 定义Etcd Server接口
 type Server interface {
 	// AddMember attempts to add a member into the cluster. It will return
 	// ErrIDRemoved if member ID is removed from the cluster, or return
@@ -198,6 +199,7 @@ type EtcdServer struct {
 	r            raftNode        // uses 64-bit atomics; keep 64-bit aligned.
 
 	readych chan struct{}
+	// 外部参数传递到的配置信息
 	Cfg     ServerConfig
 
 	lgMu *sync.RWMutex
@@ -208,6 +210,7 @@ type EtcdServer struct {
 	readMu sync.RWMutex
 	// read routine notifies etcd server that it waits for reading by sending an empty struct to
 	// readwaitC
+	// 处理线性读
 	readwaitc chan struct{}
 	// readNotifier is used to notify the read routine that it can process the request
 	// when there is no error
@@ -237,6 +240,7 @@ type EtcdServer struct {
 	// applyV3 is the applier with auth and quotas
 	applyV3 applierV3
 	// applyV3Base is the core applier without auth or quotas
+	// 应用v3的Entries记录
 	applyV3Base applierV3
 	applyWait   wait.WaitTime
 
@@ -325,6 +329,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	}
 	ss := snap.New(cfg.Logger, cfg.SnapDir())
 
+	// db路径
 	bepath := cfg.backendPath()
 	beExist := fileutil.Exist(bepath)
 	be := openBackend(cfg)
@@ -345,6 +350,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 	)
 
 	switch {
+	// 不存在WAL且加入已经存在的集群
 	case !haveWAL && !cfg.NewCluster:
 		if err = cfg.VerifyJoinExisting(); err != nil {
 			return nil, err
@@ -367,6 +373,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		remotes = existingCluster.Members()
 		cl.SetID(types.ID(0), existingCluster.ID())
 		cl.SetStore(st)
+		// 设置三个bucket存储集群本身的信息
 		cl.SetBackend(be)
 		id, n, s, w = startNode(cfg, cl, nil)
 		cl.SetID(id, existingCluster.ID())
@@ -517,6 +524,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 				Node:        n,
 				heartbeat:   heartbeat,
 				raftStorage: s,
+				// 负责持久化snap和wal
 				storage:     NewStorage(w, ss),
 			},
 		),
@@ -739,6 +747,7 @@ func (s *EtcdServer) adjustTicks() {
 func (s *EtcdServer) Start() {
 	s.start()
 	s.goAttach(func() { s.adjustTicks() })
+	// 将集群信息发送给其他节点
 	s.goAttach(func() { s.publish(s.Cfg.ReqTimeout()) })
 	s.goAttach(s.purgeFile)
 	s.goAttach(func() { monitorFileDescriptor(s.getLogger(), s.stopping) })
@@ -929,6 +938,7 @@ type raftReadyHandler struct {
 	updateCommittedIndex func(uint64)
 }
 
+// Etcd server核心逻辑
 func (s *EtcdServer) run() {
 	lg := s.getLogger()
 
@@ -1056,9 +1066,12 @@ func (s *EtcdServer) run() {
 
 	for {
 		select {
+		// 读取到一个apply信号，此时需要进行apply操作
 		case ap := <-s.r.apply():
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
+			// 本地FIFO队列进行数据落盘apply操作
 			sched.Schedule(f)
+			// 处理lease过期消息
 		case leases := <-expiredLeaseC:
 			s.goAttach(func() {
 				// Increases throughput of expired leases deletion process through parallelization
@@ -1123,6 +1136,7 @@ func (s *EtcdServer) applyAll(ep *etcdProgress, apply *apply) {
 	// storage, since the raft routine might be slower than apply routine.
 	<-apply.notifyc
 
+	// 判断是否触发快照
 	s.triggerSnapshot(ep)
 	select {
 	// snapshot requested via send()
@@ -1259,6 +1273,7 @@ func (s *EtcdServer) applySnapshot(ep *etcdProgress, apply *apply) {
 		}
 	}()
 
+	// 更新Etcd server中的额backend实例
 	s.be = newbe
 	s.bemu.Unlock()
 
@@ -2129,6 +2144,7 @@ func (s *EtcdServer) sendMergedSnap(merged snap.Message) {
 // apply takes entries received from Raft (after it has been committed) and
 // applies them to the current state of the EtcdServer.
 // The given entries should not be empty.
+// 进行最终的数据apply
 func (s *EtcdServer) apply(
 	es []raftpb.Entry,
 	confState *raftpb.ConfState,

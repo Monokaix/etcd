@@ -43,6 +43,7 @@ import (
 const maxLearners = 1
 
 // RaftCluster is a list of Members that belong to the same raft cluster
+// 记录集群状态，包含每个Member
 type RaftCluster struct {
 	lg *zap.Logger
 

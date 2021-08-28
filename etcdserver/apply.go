@@ -48,6 +48,7 @@ type applyResult struct {
 }
 
 // applierV3 is the interface for processing V3 raft messages
+// 主要实现是 appliedV3backend
 type applierV3 interface {
 	Apply(r *pb.InternalRaftRequest) *applyResult
 
@@ -112,6 +113,7 @@ func (s *EtcdServer) newApplierV3() applierV3 {
 	)
 }
 
+// 根据请求类型请求不同函数进行处理
 func (a *applierV3backend) Apply(r *pb.InternalRaftRequest) *applyResult {
 	ar := &applyResult{}
 	defer func(start time.Time) {
@@ -201,6 +203,7 @@ func (a *applierV3backend) Put(txn mvcc.TxnWrite, p *pb.PutRequest) (resp *pb.Pu
 	var rr *mvcc.RangeResult
 	if p.IgnoreValue || p.IgnoreLease || p.PrevKv {
 		trace.DisableStep()
+		// 查询之前的kv
 		rr, err = txn.Range(p.Key, nil, mvcc.RangeOptions{})
 		if err != nil {
 			return nil, nil, err
@@ -356,10 +359,12 @@ func (a *applierV3backend) Range(ctx context.Context, txn mvcc.TxnRead, r *pb.Ra
 	return resp, nil
 }
 
+// 批量操作
 func (a *applierV3backend) Txn(rt *pb.TxnRequest) (*pb.TxnResponse, error) {
 	isWrite := !isTxnReadonly(rt)
 	txn := mvcc.NewReadOnlyTxnWrite(a.s.KV().Read(traceutil.TODO()))
 
+	// 检查事务比较成功还是失败
 	txnPath := compareToPath(txn, rt)
 	if isWrite {
 		if _, err := checkRequests(txn, rt, txnPath, a.checkPut); err != nil {
@@ -387,6 +392,7 @@ func (a *applierV3backend) Txn(rt *pb.TxnRequest) (*pb.TxnResponse, error) {
 	if len(txn.Changes()) != 0 {
 		rev++
 	}
+	// 提交事务
 	txn.End()
 
 	txnResp.Header.Revision = rev
@@ -617,6 +623,7 @@ func (a *applierV3backend) LeaseCheckpoint(lc *pb.LeaseCheckpointRequest) (*pb.L
 	return &pb.LeaseCheckpointResponse{Header: newHeader(a.s)}, nil
 }
 
+// 存储告警信息
 func (a *applierV3backend) Alarm(ar *pb.AlarmRequest) (*pb.AlarmResponse, error) {
 	resp := &pb.AlarmResponse{}
 	oldCount := len(a.s.alarmStore.Get(ar.Alarm))

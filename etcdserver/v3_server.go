@@ -646,6 +646,7 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 	defer cancel()
 
 	start := time.Now()
+	// 最终调用的是propose方法发送一个写请求
 	err = s.r.Propose(cctx, data)
 	if err != nil {
 		proposalsFailed.Inc()

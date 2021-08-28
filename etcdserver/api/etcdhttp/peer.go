@@ -37,6 +37,7 @@ const (
 )
 
 // NewPeerHandler generates an http.Handler to handle etcd peer requests.
+// 处理etcd peer请求的handler
 func NewPeerHandler(lg *zap.Logger, s etcdserver.ServerPeerV2) http.Handler {
 	return newPeerHandler(lg, s, s.RaftHandler(), s.LeaseHandler(), s.HashKVHandler())
 }
