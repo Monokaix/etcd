@@ -54,9 +54,11 @@ func waitDeletes(ctx context.Context, client *v3.Client, pfx string, maxCreateRe
 		if err != nil {
 			return nil, err
 		}
+		// 说明该锁之前的实例都已经释放锁了，此时就返回获得锁了
 		if len(resp.Kvs) == 0 {
 			return resp.Header, nil
 		}
+		// 这里返回的是前一个key
 		lastKey := string(resp.Kvs[0].Key)
 		if err = waitDelete(ctx, client, lastKey, resp.Header.Revision); err != nil {
 			return nil, err
