@@ -93,11 +93,13 @@ type WatchResponse struct {
 // watchStream contains a collection of watchers that share
 // one streaming chan to send out watched events and other control events.
 type watchStream struct {
+	// 实现: mvcc/watchable_store.go watchableStore
 	watchable watchable
 	ch        chan WatchResponse
 
 	mu sync.Mutex // guards fields below it
 	// nextID is the ID pre-allocated for next new watcher in this stream
+	// 当客户端未指定watch id时，会用next id自动分配一个id
 	nextID   WatchID
 	closed   bool
 	cancels  map[WatchID]cancelFunc
@@ -108,6 +110,7 @@ type watchStream struct {
 func (ws *watchStream) Watch(id WatchID, key, end []byte, startRev int64, fcs ...FilterFunc) (WatchID, error) {
 	// prevent wrong range where key >= end lexicographically
 	// watch request with 'WithFromKey' has empty-byte range end
+	// key的字母序不能大于等于end
 	if len(end) != 0 && bytes.Compare(key, end) != -1 {
 		return -1, ErrEmptyWatcherRange
 	}
@@ -124,6 +127,7 @@ func (ws *watchStream) Watch(id WatchID, key, end []byte, startRev int64, fcs ..
 		}
 		id = ws.nextID
 		ws.nextID++
+		// 校验watch id不能重复
 	} else if _, ok := ws.watchers[id]; ok {
 		return -1, ErrWatcherDuplicateID
 	}

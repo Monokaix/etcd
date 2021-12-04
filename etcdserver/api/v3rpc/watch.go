@@ -42,6 +42,7 @@ type watchServer struct {
 	maxRequestBytes int
 
 	sg        etcdserver.RaftStatusGetter
+	// 实现: watchable_store.go watchableStore
 	watchable mvcc.WatchableKV
 	ag        AuthGetter
 }
@@ -129,16 +130,21 @@ type serverWatchStream struct {
 	watchable mvcc.WatchableKV
 	ag        AuthGetter
 
+	// 和客户端建立的grpc stream连接，通过Recv/Send来接收/发送请求/回应
 	gRPCStream  pb.Watch_WatchServer
+	// 实现: mvcc/watcher.go watchStream
 	watchStream mvcc.WatchStream
+	// 向grpc stream发送的watch response放在chan里
 	ctrlStream  chan *pb.WatchResponse
 
 	// mu protects progress, prevKV, fragment
 	mu sync.RWMutex
 	// tracks the watchID that stream might need to send progress to
+	// 记录需要发送progress的watch id
 	// TODO: combine progress and prevKV into a single struct?
 	progress map[mvcc.WatchID]bool
 	// record watch IDs that need return previous key-value pair
+	// 记录 需要发送指定watch revision之前的event的watch id
 	prevKV map[mvcc.WatchID]bool
 	// records fragmented watch IDs
 	fragment map[mvcc.WatchID]bool
@@ -245,11 +251,13 @@ func (sws *serverWatchStream) recvLoop() error {
 		}
 
 		switch uv := req.RequestUnion.(type) {
+		// 创建watch请求
 		case *pb.WatchRequest_CreateRequest:
 			if uv.CreateRequest == nil {
 				break
 			}
 
+			// 确定watch key的begin-end范围
 			creq := uv.CreateRequest
 			if len(creq.Key) == 0 {
 				// \x00 is the smallest key
@@ -265,6 +273,7 @@ func (sws *serverWatchStream) recvLoop() error {
 				creq.RangeEnd = []byte{}
 			}
 
+			// 从context里获取username校验用户是否在请求的range key范围内有权限
 			if !sws.isWatchPermitted(creq) {
 				wr := &pb.WatchResponse{
 					Header:       sws.newResponseHeader(sws.watchStream.Rev()),
@@ -282,6 +291,7 @@ func (sws *serverWatchStream) recvLoop() error {
 				}
 			}
 
+			// 过滤客户端指定的事件，PUT/DELETE
 			filters := FiltersFromRequest(creq)
 
 			wsrev := sws.watchStream.Rev()
@@ -318,6 +328,7 @@ func (sws *serverWatchStream) recvLoop() error {
 				return nil
 			}
 
+			// 取消watch请求
 		case *pb.WatchRequest_CancelRequest:
 			if uv.CancelRequest != nil {
 				id := uv.CancelRequest.WatchId
@@ -335,6 +346,7 @@ func (sws *serverWatchStream) recvLoop() error {
 					sws.mu.Unlock()
 				}
 			}
+			// 查询watch请求进度，返回当前的revision
 		case *pb.WatchRequest_ProgressRequest:
 			if uv.ProgressRequest != nil {
 				sws.ctrlStream <- &pb.WatchResponse{
@@ -360,6 +372,7 @@ func (sws *serverWatchStream) sendLoop() {
 	interval := GetProgressReportInterval()
 	progressTicker := time.NewTicker(interval)
 
+	// 记录metrics数据
 	defer func() {
 		progressTicker.Stop()
 		// drain the chan to clean up pending events
@@ -373,6 +386,9 @@ func (sws *serverWatchStream) sendLoop() {
 		}
 	}()
 
+	// sendLoop监听两个channel
+	// 1、创建/取消watch时的返回信息
+	// 2、新产生的事件
 	for {
 		select {
 		case wresp, ok := <-sws.watchStream.Chan():

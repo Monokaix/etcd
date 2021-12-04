@@ -78,14 +78,17 @@ func (wb watcherBatch) add(w *watcher, ev mvccpb.Event) {
 
 // newWatcherBatch maps watchers to their matched events. It enables quick
 // events look up by watcher.
+// 返回watcher和对应的event
 func newWatcherBatch(wg *watcherGroup, evs []mvccpb.Event) watcherBatch {
 	if len(wg.watchers) == 0 {
 		return nil
 	}
 
 	wb := make(watcherBatch)
+	// 遍历所有的Event，根据Event的key来查找指定的watcher
 	for _, ev := range evs {
 		for w := range wg.watcherSetByKey(string(ev.Kv.Key)) {
+			// 说明指定的key发生了变化
 			if ev.Kv.ModRevision >= w.minRev {
 				// don't double notify
 				wb.add(w, ev)
@@ -145,9 +148,11 @@ func (w watcherSetByKey) delete(wa *watcher) bool {
 
 // watcherGroup is a collection of watchers organized by their ranges
 type watcherGroup struct {
+	// 单个key对应的watcher
 	// keyWatchers has the watchers that watch on a single key
 	keyWatchers watcherSetByKey
 	// ranges has the watchers that watch a range; it is sorted by interval
+	// 区间对应的watcher
 	ranges adt.IntervalTree
 	// watchers is the set of all watchers
 	watchers watcherSet
@@ -192,6 +197,7 @@ func (wg *watcherGroup) contains(key string) bool {
 func (wg *watcherGroup) size() int { return len(wg.watchers) }
 
 // delete removes a watcher from the group.
+// 从watchGroup删除watch单个key或者range key的watcher
 func (wg *watcherGroup) delete(wa *watcher) bool {
 	if _, ok := wg.watchers[wa]; !ok {
 		return false
@@ -250,6 +256,7 @@ func (wg *watcherGroup) chooseAll(curRev, compactRev int64) int64 {
 			// mark 'restore' done, since it's chosen
 			w.restore = false
 		}
+		// watch的版本已被压缩，直接返回已压缩并删除该watcher
 		if w.minRev < compactRev {
 			select {
 			case w.ch <- WatchResponse{WatchID: w.id, CompactRevision: compactRev}:
@@ -268,6 +275,7 @@ func (wg *watcherGroup) chooseAll(curRev, compactRev int64) int64 {
 }
 
 // watcherSetByKey gets the set of watchers that receive events on the given key.
+// 查找监听在指定key上的watcher
 func (wg *watcherGroup) watcherSetByKey(key string) watcherSet {
 	wkeys := wg.keyWatchers[key]
 	wranges := wg.ranges.Stab(adt.NewStringAffinePoint(key))
